@@ -1,0 +1,662 @@
+*&---------------------------------------------------------------------*
+*& Report  Y_EIK_REQUEST
+*&
+*&---------------------------------------------------------------------*
+*&
+*&
+*&---------------------------------------------------------------------*
+
+REPORT  Y_EIK_REQUEST.
+
+TABLES: lfa1, kna1.
+
+"Definition of all variables
+DATA: lv_eik(13)             TYPE c.
+DATA: lv_company_name(30)    TYPE c.
+DATA: lv_company_address(30) TYPE c.
+DATA: lv_company_code        TYPE bkpf-bukrs.
+DATA: lv_lifnr               TYPE lfb1-lifnr.
+
+DATA: lv_len    TYPE i.
+
+DATA: lv_dig1   TYPE c LENGTH 1.
+DATA: lv_dig2   TYPE c LENGTH 1.
+DATA: lv_dig3   TYPE c LENGTH 1.
+DATA: lv_dig4   TYPE c LENGTH 1.
+DATA: lv_dig5   TYPE c LENGTH 1.
+DATA: lv_dig6   TYPE c LENGTH 1.
+DATA: lv_dig7   TYPE c LENGTH 1.
+DATA: lv_dig8   TYPE c LENGTH 1.
+DATA: lv_dig9   TYPE c LENGTH 1.
+DATA: lv_dig10  TYPE c LENGTH 1.
+DATA: lv_dig11  TYPE c LENGTH 1.
+DATA: lv_dig12  TYPE c LENGTH 1.
+DATA: lv_dig13  TYPE c LENGTH 1.
+
+DATA: lv_sum    TYPE c LENGTH 10.
+DATA: lv_sum2   TYPE c LENGTH 10.
+DATA: lv_sum3   TYPE c LENGTH 10.
+DATA: lv_sum4   TYPE c LENGTH 10.
+DATA: lv_sum5   TYPE c LENGTH 10.
+
+DATA: lv_check1 TYPE c LENGTH 2.
+DATA: lv_check2 TYPE c LENGTH 2.
+DATA: lv_check3 TYPE c LENGTH 2.
+DATA: lv_check4 TYPE c LENGTH 2.
+DATA: lv_check5 TYPE c LENGTH 2.
+
+DATA: lv_stceg  TYPE lfa1-stceg.
+
+DATA: lv_eik_kna1 TYPE kna1-stcd1.
+DATA: lv_eik_lfa1 TYPE lfa1-stcd1.
+
+DATA: button1   TYPE c.
+
+DATA: lv_name1        TYPE kna1-name1.
+DATA: lv_name2_kna1   TYPE kna1-name2.
+DATA: lv_ort01        TYPE kna1-ort01.
+DATA: lv_stras        TYPE kna1-stras.
+DATA: lv_kunnr        TYPE kna1-kunnr.
+DATA: lv_kunnr2       TYPE knb1-kunnr.
+DATA: lv_lifnr2       TYPE lfa1-lifnr.
+
+DATA: lv_lifnr_lfa1   TYPE lfa1-lifnr.
+DATA: lv_name1_lfa1   TYPE lfa1-name1.
+DATA: lv_name2_lfa1   TYPE lfa1-name2.
+DATA: lv_ort01_lfa1   TYPE lfa1-ort01.
+DATA: lv_stras_lfa1   TYPE lfa1-stras.
+
+DATA: lv_bukrs     TYPE bkpf-bukrs.
+
+DATA: lv_name2     TYPE user_addr-name_textc.
+DATA: lv_comp_name TYPE user_addr-mc_name1.
+DATA: lv_tel_num   TYPE adr2-tel_number.
+DATA: lv_email     TYPE adr6-smtp_addr.
+
+DATA: new_eik TYPE string.
+
+DATA: new_name_kna1 TYPE string.
+DATA: new_name_lfa1 TYPE string.
+
+DATA: new_email_field TYPE string.
+
+DATA: lv_lifnr_inner TYPE lfa1-lifnr.
+DATA: lv_kunnr_inner TYPE kna1-kunnr.
+
+DATA: lv_msg_error TYPE string.
+
+TYPES: BEGIN OF ty_lines,
+    line TYPE char255,
+  END OF ty_lines.
+
+DATA: ti_lines TYPE STANDARD TABLE OF ty_lines,
+      wa_lines TYPE ty_lines.
+
+DATA: title TYPE string VALUE 'Заявка за клиент/доставчик'.
+
+
+"Selection screen of program
+SELECTION-SCREEN: BEGIN OF BLOCK b1 WITH FRAME TITLE text-001.
+
+PARAMETERS: rad1 RADIOBUTTON GROUP text USER-COMMAND frad1 DEFAULT 'X',
+            rad2 RADIOBUTTON GROUP text,
+            rad3 RADIOBUTTON GROUP text.
+
+SELECTION-SCREEN SKIP.
+
+PARAMETERS:
+  s_code TYPE bkpf-bukrs  OBLIGATORY,
+  s_eik  TYPE c LENGTH 16 OBLIGATORY.
+
+PARAMETERS: s_check AS CHECKBOX.
+
+PARAMETERS:
+      s_name TYPE c LENGTH 30 OBLIGATORY,
+      s_addr TYPE c LENGTH 30.
+
+
+SELECTION-SCREEN SKIP.
+SELECTION-SCREEN SKIP.
+SELECTION-SCREEN SKIP.
+
+SELECTION-SCREEN: PUSHBUTTON 1(15) but1 USER-COMMAND button_001.
+
+SELECTION-SCREEN: END OF BLOCK b1.
+
+
+INITIALIZATION.
+  but1 = 'Изпрати Мейл'.
+
+  rad1 = 'Клиент'.
+  rad2 = 'Доставчик'.
+  rad3 = 'Подотчетно лице'.
+
+
+AT SELECTION-SCREEN.
+
+  SELECT SINGLE bukrs from bkpf INTO lv_bukrs WHERE bukrs = s_code.
+
+  IF sy-subrc NE 0.
+    MESSAGE 'Въведете правилен Фирмен код!' TYPE 'E'.
+  ENDIF.
+
+  IF sy-ucomm = 'ONLI'.
+    PERFORM check_eik.
+  ENDIF.
+
+  IF sy-ucomm = 'BUTTON_001'.
+    PERFORM check_eik.
+    PERFORM print_data.
+    PERFORM select_data.
+
+    PERFORM send_email.
+    MESSAGE 'Email е изпратен!' TYPE 'I'.
+  ENDIF.
+
+
+
+START-OF-SELECTION.
+
+*  PERFORM check_eik.
+  PERFORM print_data.
+  PERFORM select_data.
+
+
+*&---------------------------------------------------------------------*
+*&      Form  CHECK_EIK
+*&---------------------------------------------------------------------*
+*       Check if they are just numbers
+*       Check if it's 9, 10, or 13 digits
+*       Check by algorithm for ЕИК(ЕГН) number
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM CHECK_EIK .
+
+  new_eik = s_eik.
+
+  "Check if they are just numbers
+  IF ( new_eik CO '0123456789' ).
+
+    lv_len = strlen( s_eik ).
+
+    "Check if they are 9, 10, or 13 digits
+    IF lv_len = 9 OR lv_len = 10 OR lv_len = 13.
+
+      lv_dig1  = s_eik(1).
+      lv_dig2  = s_eik+1(1).
+      lv_dig3  = s_eik+2(1).
+      lv_dig4  = s_eik+3(1).
+      lv_dig5  = s_eik+4(1).
+      lv_dig6  = s_eik+5(1).
+      lv_dig7  = s_eik+6(1).
+      lv_dig8  = s_eik+7(1).
+      lv_dig9  = s_eik+8(1).
+      lv_dig10 = s_eik+9(1).
+      lv_dig11 = s_eik+10(1).
+      lv_dig12 = s_eik+11(1).
+      lv_dig13 = s_eik+12(1).
+
+      CLEAR lv_check1.
+      CLEAR lv_check2.
+      CLEAR lv_check3.
+      CLEAR lv_check4.
+      CLEAR lv_check5.
+
+
+      "Check by algorithm for ЕИК(ЕГН) number
+      " 9 digits
+      IF lv_len = 9.
+        lv_sum = lv_dig1 + 2 * lv_dig2 + 3 * lv_dig3 + 4 * lv_dig4 + 5 * lv_dig5 + 6 * lv_dig6 + 7 * lv_dig7 + 8 * lv_dig8.
+        lv_check1 = lv_sum mod 11.
+
+        IF lv_check1 NE 10.
+          IF lv_check1 <> lv_dig9.
+            MESSAGE 'Моля въведете правилния ЕИК номер!' TYPE 'E'.
+
+          ENDIF.
+        ENDIF.
+
+
+        IF lv_check1 = 10.
+          lv_sum2 = 3 * lv_dig1 + 4 * lv_dig2 + 5 * lv_dig3 + 6 * lv_dig4 + 7 * lv_dig5 + 8 * lv_dig6 + 9 * lv_dig7 + 10 * lv_dig8.
+          lv_check2 = lv_sum2 mod 11.
+
+          IF lv_check2 = 10 or lv_check2 = 0.
+            IF lv_dig9 NE 0.
+              MESSAGE 'Моля въведете правилния ЕИК номер!' TYPE 'E'.
+            ENDIF.
+          ENDIF.
+
+          IF lv_check2 NE 10 AND lv_check2 NE 0.
+            IF lv_check2 <> lv_dig9.
+              MESSAGE 'Моля въведете правилния ЕИК номер!' TYPE 'E'.
+
+            ENDIF.
+
+          ENDIF.
+
+        ENDIF.
+      ENDIF.
+
+
+
+
+      "Check by algorithm for ЕИК(ЕГН) number
+      " 10 digits
+      IF lv_len = 10.
+        lv_sum5 = 2 * lv_dig1 + 4 * lv_dig2 + 8 * lv_dig3 + 5 * lv_dig4 + 10 * lv_dig5 + 9 * lv_dig6 + 7 * lv_dig7 + 3 * lv_dig8 + 6 * lv_dig9.
+        lv_check5 = lv_sum5 mod 11.
+
+        IF lv_check5 = 10.
+          lv_check5 = 0.
+
+        ENDIF.
+
+        IF lv_dig10 NE lv_check5.
+          MESSAGE 'Моля въведете правилен ЕГН номер!' TYPE 'E'.
+
+        ENDIF.
+      ENDIF.
+
+
+
+      "Check by algorithm for ЕИК(ЕГН) number
+      " 13 digits
+      IF lv_len = 13.
+        lv_sum = lv_dig1 + 2 * lv_dig2 + 3 * lv_dig3 + 4 * lv_dig4 + 5 * lv_dig5 + 6 * lv_dig6 + 7 * lv_dig7 + 8 * lv_dig8.
+        lv_check1 = lv_sum mod 11.
+
+        IF lv_check1 NE 10.
+          IF lv_check1 <> lv_dig9.
+            MESSAGE 'Моля въведете правилния ЕИК номер!' TYPE 'E'.
+
+          ENDIF.
+        ENDIF.
+
+
+        IF lv_check1 = 10.
+          lv_sum2 = 3 * lv_dig1 + 4 * lv_dig2 + 5 * lv_dig3 + 6 * lv_dig4 + 7 * lv_dig5 + 8 * lv_dig6 + 9 * lv_dig7 + 10 * lv_dig8.
+          lv_check2 = lv_sum2 mod 11.
+
+          IF lv_check2 = 10 or lv_check2 = 0.
+            IF lv_dig9 NE 0.
+              MESSAGE 'Моля въведете правилния ЕИК номер!' TYPE 'E'.
+            ENDIF.
+          ENDIF.
+
+          IF lv_check2 NE 10 AND lv_check2 NE 0.
+            IF lv_check2 <> lv_dig9.
+              MESSAGE 'Моля въведете правилния ЕИК номер!' TYPE 'E'.
+
+            ENDIF.
+
+          ENDIF.
+
+        ENDIF.
+
+        lv_sum3 = 2 * lv_dig9 + 7 * lv_dig10 + 3 * lv_dig11 + 5 * lv_dig12.
+        lv_check3 = lv_sum3 mod 11.
+
+        IF lv_check3 NE 10.
+          IF lv_check3 <> lv_dig13.
+            MESSAGE 'Моля въведете правилния ЕИК номер!' TYPE 'E'.
+
+          ENDIF.
+        ENDIF.
+
+        IF lv_check3 = 10.
+          lv_sum4 = 4 * lv_dig9 + 9 * lv_dig10 + 5 * lv_dig11 + 7 * lv_dig12.
+          lv_check3 = lv_sum2 mod 11.
+
+          IF lv_check3 = 10.
+            lv_check3 = 0.
+          endif.
+
+
+          IF lv_check3 <> lv_dig13.
+            MESSAGE 'Моля въведете правилния ЕИК номер!' TYPE 'E'.
+          ENDIF.
+
+        ENDIF.
+
+      ENDIF.
+
+    ELSE.
+      MESSAGE 'ЕИК/ЕГН номер трябва да съдържа 9, 10 или 13 цифри!' TYPE 'E'.
+    ENDIF.
+  ELSE.
+    MESSAGE 'ЕИК/ЕГН номер трябва да съдържа само цифри!' TYPE 'E'.
+  ENDIF.
+
+
+
+* Доставчик и подотчетно лице - Проверка
+  IF rad2 = 'X'  OR rad3 = 'X'.
+    SELECT SINGLE lfa1~lifnr INTO lv_lifnr_inner FROM lfa1 INNER JOIN lfb1 ON lfa1~lifnr = lfb1~lifnr WHERE lfa1~stcd1 = new_eik AND lfb1~bukrs = s_code.
+
+    IF sy-subrc = 0.
+      CONCATENATE 'Този Доставчик/ПЧ съществува за фирмен код: ' s_code INTO lv_msg_error SEPARATED BY SPACE.
+      MESSAGE lv_msg_error TYPE 'E'.
+
+    ENDIF.
+
+  ENDIF.
+
+
+
+* Клиент - Проверка
+  IF rad1 = 'X'.
+    SELECT SINGLE kna1~kunnr INTO lv_kunnr_inner FROM kna1 INNER JOIN knb1 ON kna1~kunnr = knb1~kunnr WHERE kna1~stcd1 = new_eik AND knb1~bukrs = s_code.
+
+    IF sy-subrc = 0.
+
+      CONCATENATE 'Този Клиент съществува за фирмен код: ' s_code INTO lv_msg_error SEPARATED BY SPACE.
+      MESSAGE lv_msg_error TYPE 'E'.
+
+    ENDIF.
+  ENDIF.
+
+ENDFORM.                    " CHECK_EIK
+
+
+
+*&---------------------------------------------------------------------*
+*&      Form  SEND_EMAIL
+*&---------------------------------------------------------------------*
+*       Send email to isfu_data@minfin.bg with all data
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM SEND_EMAIL .
+  DATA: text_conc TYPE string.
+  DATA: desc TYPE string.
+
+  CONSTANTS:
+    lc_subject TYPE so_obj_des VALUE 'Заявка за клиент/доставчик',
+    lc_raw     TYPE char03     VALUE 'RAW'.
+
+  DATA:
+    lv_mlrec         TYPE so_obj_nam,
+    lv_sent_to_all   TYPE os_boolean,
+    lv_email         TYPE adr6-smtp_addr,
+    lv_subject       TYPE so_obj_des,
+    lv_text          TYPE bcsy_text,
+    lr_send_request  TYPE REF TO cl_bcs,
+    lr_bcs_exception TYPE REF TO cx_bcs,
+    lr_recipient     TYPE REF TO if_recipient_bcs,
+    lr_sender        TYPE REF TO cl_sapuser_bcs,
+    lr_document      TYPE REF TO cl_document_bcs.
+
+  DATA: lv_name TYPE c LENGTH 40.
+
+  TRY.
+      "Create send request
+      lr_send_request = cl_bcs=>create_persistent( ).
+
+
+      "Email From
+      lr_sender = cl_sapuser_bcs=>create( sy-uname ). "sap@minfin.bg
+      "sy-uname
+      "Add sender to send request
+      CALL METHOD lr_send_request->set_sender
+        EXPORTING
+          i_sender = lr_sender.
+
+
+      "Email To...
+      lv_email = 'isfu_data@minfin.bg'.    "isfu_data@minfin.bg
+      lr_recipient = cl_cam_address_bcs=>create_internet_address( lv_email ).
+
+      "Add recipient to send request
+      CALL METHOD lr_send_request->add_recipient
+        EXPORTING
+          i_recipient = lr_recipient
+          i_express   = 'X'.
+
+
+      "Email BODY
+
+      CONCATENATE 'Потребител: ' lv_name2    INTO text_conc SEPARATED BY '    '.
+      APPEND text_conc to lv_text.
+
+      CONCATENATE 'Ведомство: ' lv_comp_name INTO text_conc SEPARATED BY '    '.
+      APPEND text_conc to lv_text.
+
+      CONCATENATE 'Тел. номер: ' lv_tel_num  INTO text_conc SEPARATED BY '    '.
+      APPEND text_conc to lv_text.
+
+      CONCATENATE 'Email: ' lv_email        INTO text_conc SEPARATED BY '    '.
+      APPEND text_conc to lv_text.
+
+      APPEND '-----------------------------------------------------------------------------------------------------' to lv_text.
+      APPEND 'Заявка' to lv_text.
+      APPEND ' ' to lv_text.
+
+      IF rad1 = 'X'.
+        APPEND 'Вид:    Клиент' TO lv_text.
+      ENDIF.
+
+      IF rad2 = 'X'.
+        APPEND 'Вид:    Доставчик' TO lv_text.
+      ENDIF.
+
+      IF rad3 = 'X'.
+        APPEND 'Вид:    Подотчетно лице' TO lv_text.
+      ENDIF.
+
+      CONCATENATE 'Фирмен код: ' s_code    INTO text_conc SEPARATED BY '    '.
+      APPEND text_conc to lv_text.
+
+      CONCATENATE 'ЕИК/ЕГН номер: ' s_eik  INTO text_conc SEPARATED BY '    '.
+      APPEND text_conc to lv_text.
+
+      IF s_check = 'X'.
+        CONCATENATE 'Регистрация по ДДС: ' 'ДА' INTO text_conc SEPARATED BY '  '.
+        APPEND text_conc to lv_text.
+      ENDIF.
+
+      IF s_check ne 'X'.
+        CONCATENATE 'Регистрация по ДДС: ' 'Няма' INTO text_conc SEPARATED BY '  '.
+        APPEND text_conc to lv_text.
+      ENDIF.
+
+
+      CONCATENATE 'Име: ' s_name           INTO text_conc SEPARATED BY '    '.
+      APPEND text_conc to lv_text.
+
+      CONCATENATE 'Адрес: ' s_addr         INTO text_conc SEPARATED BY '    '.
+      APPEND text_conc to lv_text.
+
+      APPEND '----------------------------------------------------------------------------------------------------' to lv_text.
+
+      CONCATENATE 'Номер на клиента: ' lv_kunnr INTO text_conc SEPARATED BY '     '.
+      APPEND text_conc to lv_text.
+
+
+      CONCATENATE 'Име на клиента: ' new_name_kna1 INTO text_conc SEPARATED BY '     '.
+      APPEND text_conc to lv_text.
+
+
+      CONCATENATE 'Адрес на клиента: ' lv_stras ', ' lv_ort01 INTO text_conc SEPARATED BY '     '.
+      APPEND text_conc to lv_text.
+
+      APPEND '----------------------------------------------------------------------------------------------------' to lv_text.
+
+      CONCATENATE 'Номер на доставчик: '  lv_lifnr_lfa1 INTO text_conc SEPARATED BY '     '.
+      APPEND text_conc to lv_text.
+
+
+      CONCATENATE 'Име на доставчик: ' new_name_lfa1 INTO text_conc SEPARATED BY '     '.
+      APPEND text_conc to lv_text.
+
+      CONCATENATE 'Адрес на доставчик: ' lv_stras_lfa1 ', ' lv_ort01_lfa1 INTO text_conc SEPARATED BY '     '.
+      APPEND text_conc to lv_text.
+
+      APPEND '----------------------------------------------------------------------------------------------------' to lv_text.
+
+      lr_document = cl_document_bcs=>create_document(
+                      i_type    = lc_raw
+                      i_text    = lv_text
+*                      i_text    = lv_name
+                      i_subject = lc_subject ).
+
+      "Add document to send request
+      CALL METHOD lr_send_request->set_document( lr_document ).
+
+
+      "Send email
+      CALL METHOD lr_send_request->send(
+        EXPORTING
+          i_with_error_screen = 'X'
+        RECEIVING
+          result              = lv_sent_to_all ).
+      IF lv_sent_to_all = 'X'.
+        WRITE 'Email sent successfully!'.
+      ENDIF.
+
+      "Commit to send email
+      COMMIT WORK.          "MANDATORY*
+
+
+      "Exception handling
+    CATCH cx_bcs INTO lr_bcs_exception.
+      WRITE:
+        'Error!',
+        'Error type:',
+        lr_bcs_exception->error_type.
+  ENDTRY.
+
+
+
+ENDFORM.                    " SEND_EMAIL
+
+
+
+*&---------------------------------------------------------------------*
+*&      Form  PRINT_DATA
+*&---------------------------------------------------------------------*
+*       Print data after press button Execute
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM PRINT_DATA .
+
+  SELECT SINGLE name_textc FROM user_addr INTO lv_name2 WHERE bname = sy-uname.
+  WRITE:/ 'Потребител: ', lv_name2.
+
+  SELECT SINGLE mc_name1 FROM user_addr INTO lv_comp_name WHERE bname = sy-uname.
+  WRITE:/ 'Ведомство: ', lv_comp_name.
+
+  SELECT SINGLE adr2~tel_number INTO lv_tel_num FROM adr2
+                                INNER JOIN usr21 ON adr2~persnumber = usr21~persnumber AND adr2~addrnumber = usr21~addrnumber WHERE usr21~bname = sy-uname.
+  WRITE:/ 'Тел. номер: ', lv_tel_num.
+
+  SELECT SINGLE adr6~smtp_addr  INTO lv_email FROM adr6
+                                INNER JOIN usr21 ON adr6~persnumber = usr21~persnumber AND adr6~addrnumber = usr21~addrnumber WHERE usr21~bname = sy-uname.
+
+  new_email_field = lv_email.
+  WRITE:/ 'Email: ', new_email_field.
+
+  SKIP.
+  SKIP.
+
+  IF rad1 = 'X'.
+    WRITE:/ 'Клиент'.
+  ENDIF.
+
+  IF rad2 = 'X'.
+    WRITE:/ 'Доставчик'.
+  ENDIF.
+
+  IF rad3 = 'X'.
+    WRITE:/ 'Подотчетно лице'.
+  ENDIF.
+
+  SKIP.
+
+  WRITE:/ 'ЕИК/ЕГН номер: ', s_eik.
+
+  IF s_check = 'X'.
+    WRITE:/ 'Регистрация по ДДС:  ДА'.
+
+  ENDIF.
+
+  IF s_check NE 'X'.
+    WRITE:/ 'Регистрация по ДДС:  Няма'.
+
+  ENDIF.
+
+  WRITE:/ 'Име:           ', s_name(13).
+  WRITE:/ 'Адрес:         ', s_addr(13).
+  WRITE:/ 'Фирмен код:    ', s_code.
+
+  SKIP.
+  SKIP.
+
+ENDFORM.                    " PRINT_DATA
+
+
+*&---------------------------------------------------------------------*
+*&      Form  SELECT_DATA
+*&---------------------------------------------------------------------*
+*       Check ЕИК/ЕГН number does exist in tables kna1 and lfa1
+*       Select data (stcd1, lifnr, kunnr, name1, ort01, stras) from
+*       table lfa1 and kna1.
+*----------------------------------------------------------------------*
+*  -->  p1        text
+*  <--  p2        text
+*----------------------------------------------------------------------*
+FORM SELECT_DATA .
+  new_eik = s_eik.
+
+  "Check EIK number does exist in table kna1
+  SELECT SINGLE stcd1 FROM kna1 INTO lv_eik_kna1 WHERE stcd1 = s_eik.
+  IF lv_eik_kna1 = s_eik.
+    WRITE:/ 'Този ЕИК номер СЪЩЕСТВУВА в клиенти (таблица KNA1).'.
+  ELSE.
+    WRITE:/ 'Този ЕИК номер НЕ СЪЩЕСТВУВА в клиенти (таблица KNA1)'.
+  ENDIF.
+
+  SELECT SINGLE kunnr name1 name2 ort01 stras FROM kna1 INTO (lv_kunnr, lv_name1, lv_name2_kna1, lv_ort01, lv_stras) WHERE stcd1 = s_eik.
+  CONCATENATE lv_name1 lv_name2_kna1 INTO new_name_kna1.
+
+  IF lv_kunnr NE 0 OR lv_name1 NE 0 OR lv_ort01 NE 0 OR lv_stras NE 0.
+
+    WRITE:/ 'Клиент номер: ', lv_kunnr.
+    WRITE:/ 'Име: '         , new_name_kna1.
+    WRITE:/ 'Град: '        , lv_ort01.
+    WRITE:/ 'Адрес: '       , lv_stras.
+
+  ENDIF.
+
+  SKIP.
+  SKIP.
+
+
+  "Check EIK number does exist in table lfa1
+  SELECT SINGLE stcd1 FROM lfa1 INTO  lv_eik_lfa1 WHERE stcd1 = s_eik.
+  IF lv_eik_lfa1 = s_eik.
+    WRITE:/ 'Този ЕИК номер СЪЩЕСТВУВА в доставчици (таблица LFA1).'.
+  ELSE.
+    WRITE:/ 'Този ЕИК номер НЕ СЪЩЕСТВУВА в доставчици (таблица LFA1)'.
+  ENDIF.
+
+  SELECT SINGLE lifnr name1 name2 ort01 stras FROM lfa1 INTO (lv_lifnr_lfa1, lv_name1_lfa1, lv_name2_lfa1, lv_ort01_lfa1, lv_stras_lfa1) WHERE stcd1 = s_eik.
+  CONCATENATE lv_name1_lfa1 lv_name2_lfa1 INTO new_name_lfa1.
+
+  IF lv_lifnr_lfa1 NE 0 OR lv_name1_lfa1 NE 0 OR lv_ort01_lfa1 NE 0 OR lv_stras_lfa1 NE 0.
+    WRITE:/ 'Доставчик номер: ', lv_lifnr_lfa1.
+    WRITE:/ 'Име: '         , new_name_lfa1.
+    WRITE:/ 'Град: '        , lv_ort01_lfa1.
+    WRITE:/ 'Адрес: '       , lv_stras_lfa1.
+
+  ENDIF.
+
+  SKIP.
+
+
+ENDFORM.                    " SELECT_DATA
